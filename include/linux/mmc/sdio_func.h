@@ -132,6 +132,7 @@ extern int sdio_claim_irq_lockless(struct sdio_func *func,
 extern int sdio_release_irq(struct sdio_func *func);
 extern int sdio_enable_irq(struct sdio_func *func);
 extern int sdio_disable_irq(struct sdio_func *func);
+extern int sdio_flush_irq(struct sdio_func *func);
 
 extern unsigned int sdio_align_size(struct sdio_func *func, unsigned int sz);
 

@@ -293,6 +293,10 @@ struct mmc_host {
 	bool			sdio_irq_pending;
 	atomic_t		sdio_irq_thread_abort;
 
+	spinlock_t		sdio_irq_running_lock;
+	bool			sdio_irq_running;
+	wait_queue_head_t	sdio_wq;
+
 	mmc_pm_flag_t		pm_flags;	/* requested pm features */
 
 #ifdef CONFIG_LEDS_TRIGGERS
@@ -337,8 +341,12 @@ extern void mmc_request_done(struct mmc_host *, struct mmc_request *);
 
 static inline void mmc_signal_sdio_irq(struct mmc_host *host)
 {
+	unsigned long flags;
+
 	host->ops->enable_sdio_irq(host, 0);
-	host->sdio_irq_pending = true;
+	spin_lock_irqsave(&host->sdio_irq_running_lock, flags);
+	host->sdio_irq_running = true;
+	spin_unlock_irqrestore(&host->sdio_irq_running_lock, flags);
 	wake_up_process(host->sdio_irq_thread);
 }
 

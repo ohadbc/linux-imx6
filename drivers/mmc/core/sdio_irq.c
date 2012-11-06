@@ -98,6 +98,7 @@ static int sdio_irq_thread(void *_host)
 	struct mmc_host *host = _host;
 	struct sched_param param = { .sched_priority = 1 };
 	unsigned long period, idle_period;
+	unsigned long flags;
 	int ret;
 
 	sched_setscheduler(current, SCHED_FIFO, &param);
@@ -147,6 +148,10 @@ static int sdio_irq_thread(void *_host)
 				schedule_timeout(HZ);
 			set_current_state(TASK_RUNNING);
 		}
+			host->sdio_irq_running = false;
+			spin_lock_irqsave(&host->sdio_irq_running_lock, flags);
+			wake_up_all(&host->sdio_wq);
+			spin_unlock_irqrestore(&host->sdio_irq_running_lock, flags);
 
 		/*
 		 * Adaptive polling frequency based on the assumption
@@ -164,15 +169,27 @@ static int sdio_irq_thread(void *_host)
 		}
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (host->caps & MMC_CAP_SDIO_IRQ)
+		if (host->caps & MMC_CAP_SDIO_IRQ) {
+			spin_lock_irqsave(&host->sdio_irq_running_lock, flags);
+			host->sdio_irq_running = false;
+			wake_up_all(&host->sdio_wq);
+			spin_unlock_irqrestore(&host->sdio_irq_running_lock, flags);
+
 			host->ops->enable_sdio_irq(host, 1);
+		}
 		if (!kthread_should_stop())
 			schedule_timeout(period);
 		set_current_state(TASK_RUNNING);
 	} while (!kthread_should_stop());
 
-	if (host->caps & MMC_CAP_SDIO_IRQ)
+	if (host->caps & MMC_CAP_SDIO_IRQ) {
 		host->ops->enable_sdio_irq(host, 0);
+
+		spin_lock_irqsave(&host->sdio_irq_running_lock, flags);
+		host->sdio_irq_running = false;
+		wake_up_all(&host->sdio_wq);
+		spin_unlock_irqrestore(&host->sdio_irq_running_lock, flags);
+	}
 
 	pr_debug("%s: IRQ thread exiting with code %d\n",
 		 mmc_hostname(host), ret);
@@ -406,3 +423,42 @@ int sdio_disable_irq(struct sdio_func *func)
 }
 EXPORT_SYMBOL_GPL(sdio_disable_irq);
 
+static bool sdio_irq_running(struct mmc_host *host)
+{
+	unsigned long flags;
+	bool running;
+
+	spin_lock_irqsave(&host->sdio_irq_running_lock, flags);
+	running = host->sdio_irq_running;
+	spin_unlock_irqrestore(&host->sdio_irq_running_lock, flags);
+
+	return running;
+}
+
+int sdio_flush_irq(struct sdio_func *func)
+{
+	struct mmc_host *host;
+
+	BUG_ON(!func);
+	BUG_ON(!func->card);
+
+	host = func->card->host;
+
+	while (sdio_irq_running(host)) {
+		DEFINE_WAIT(wait);
+
+		prepare_to_wait(&host->sdio_wq, &wait, TASK_UNINTERRUPTIBLE);
+		if (sdio_irq_running(host))
+			schedule();
+
+		/*
+		 * we should check the condition again, but this might be
+		 * a problem as a new irq might have come in the meantime
+		 */
+		finish_wait(&host->sdio_wq, &wait);
+
+		break;
+	}
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sdio_flush_irq);
