@@ -110,8 +110,8 @@ static int sdio_irq_thread(void *_host)
 	 * hence we poll for them in that case.
 	 */
 	idle_period = msecs_to_jiffies(10);
-	period = (host->caps & MMC_CAP_SDIO_IRQ) ?
-		MAX_SCHEDULE_TIMEOUT : idle_period;
+//	period = (host->caps & MMC_CAP_SDIO_IRQ) ?
+//		MAX_SCHEDULE_TIMEOUT : idle_period;
 
 	pr_debug("%s: IRQ thread started (poll period = %lu jiffies)\n",
 		 mmc_hostname(host), period);
